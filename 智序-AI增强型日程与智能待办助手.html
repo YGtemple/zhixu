@@ -3,7 +3,20 @@
   智序 · AI增强型日程与智能待办助手
   本文件遵守 TRAE AI 创造力大赛赛事细则：纯前端、单 HTML、双击即用、零后端依赖、
   不内置任何真实 API 密钥（仅保留配置入口与调用逻辑）、不引用第三方 CDN/字体/图标。
-  作者：参赛作品。版本：v4 (Aurora Glass)
+  作者：参赛作品。版本：v5 (Aurora Glass 优化与修复版)
+
+  v5 改动清单（2026-10-06）：
+  1. 修复时区跨天 bug：fmtDate/今日/周/月/统计/重复/番茄 streak 全部改用本地时区，
+     不再用 toISOString()（UTC），避免中国时区凌晨把“今天”算成昨天。
+  2. 修复提醒 bug：reminder=0（不提醒）不再误触发默认提醒规则。
+  3. 修复场景筛选 bug：点身份 chip 现在按任务 scene 字段过滤（原实现搜索关键词匹配不到）。
+  4. 修复 ICS 导出 DTSTART/DTEND 时区不一致（统一为 UTC Z）。
+  5. 健壮性：新增 sanitizeTasks()，加载/导入时校验并规范化每条任务字段，
+     localStorage 损坏或脏数据不再导致渲染崩溃。
+  6. 导入导出：支持 CSV 导入（与导出列对应）、JSON 备份导入校验、按 ID 去重合并、
+     导入前确认、跳过重复、防误覆盖；文件选择器放行 .json/.csv。
+  7. 可访问性：弹窗 Tab 焦点圈（focus trap）、任务卡片可键盘聚焦并回车打开详情、保留 focus-visible。
+  8. 时间边界：周视图解析周起始改为本地；空数据/异常输入走兜底，不报错。
 -->
 <html lang="zh-CN">
 <head>
@@ -984,7 +997,7 @@ body::before,body,#nebulaLayer,#nebulaLayer::before,#nebulaLayer::after{transiti
       <div class="foot-row">
         <button onclick="App.openScenePicker()" aria-label="切换身份模板" style="width:100%"><span id="sceneBtnLabel">🎭 切换身份模板</span></button>
       </div>
-      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <input type="file" id="importFile" accept=".json,.csv,application/json,text/csv" hidden>
       <div style="font-size:11px;color:var(--text-4);text-align:center;padding-top:4px">v4 · Aurora Glass · 单文件</div>
     </div>
   </aside>
@@ -1493,11 +1506,42 @@ const SCENE_PROFILES = [
   {key:'startup',name:'创业者',icon:'🚀',color:'#6366F1',desc:'商业计划、融资对接、团队管理'}
 ];
 
+/* ---------- Data sanitize (防 localStorage 损坏 / 脏数据崩溃) ---------- */
+function sanitizeTasks(raw){
+  if(!Array.isArray(raw)) return [];
+  const validStatus=['todo','doing','done'], validPri=['high','med','low'];
+  return raw.filter(t=>t&&typeof t==='object').map(t=>{
+    const id = t.id ? String(t.id) : ('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,7));
+    const date = (typeof t.date==='string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) ? t.date : '';
+    const time = (typeof t.time==='string' && /^\d{1,2}:\d{2}$/.test(t.time)) ? t.time : '';
+    return {
+      id,
+      title:String(t.title||'').slice(0,200)||'(无标题)',
+      date, time,
+      status:validStatus.includes(t.status)?t.status:'todo',
+      priority:validPri.includes(t.priority)?t.priority:'med',
+      category:String(t.category||'工作').slice(0,40),
+      scene:String(t.scene||''),
+      duration:parseInt(t.duration)||45,
+      reminder:parseInt(t.reminder)||0,
+      repeat:(t.repeat&&['daily','weekly','monthly','yearly','none'].includes(t.repeat))?t.repeat:'none',
+      repeatCustom:String(t.repeatCustom||''),
+      subtasks:Array.isArray(t.subtasks)?t.subtasks.map(s=>({text:String(s&&s.text||'').slice(0,100),done:!!(s&&s.done)})).filter(s=>s.text):[],
+      tags:Array.isArray(t.tags)?t.tags.map(x=>String(x).slice(0,30)).filter(Boolean):[],
+      note:String(t.note||'').slice(0,4000),
+      pomos:parseInt(t.pomos)||0,
+      created:parseInt(t.created)||Date.now(),
+      doneAt:parseInt(t.doneAt)||null,
+      parentRepeatId:String(t.parentRepeatId||'')
+    };
+  });
+}
+
 /* ---------- State ---------- */
 let state = {
-  tasks: load(STORAGE.TASKS, []),
+  tasks: sanitizeTasks(load(STORAGE.TASKS, [])),
   api: load(STORAGE.API, {url:'',key:'',model:'',temperature:0.4,maxTokens:2048,stream:1,dailyLimit:100,sessionLimit:30,usedToday:0,usedSession:0,dateStamp:''}),
-  ui: load(STORAGE.UI, {theme:'auto', tab:'today', filter:{stat:'',pri:'',cat:''}, sort:'due', search:'', calMonth: new Date().toISOString().slice(0,7), weekStart:'', dayDate: new Date().toISOString().slice(0,10), aiMode:'nlp', chartColors:{work:'#4F8BFF',study:'#7C5CFF',life:'#00D2FF'}, scene:''}),
+  ui: load(STORAGE.UI, {theme:'auto', tab:'today', filter:{stat:'',pri:'',cat:'',scene:''}, sort:'due', search:'', calMonth:(function(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})(), weekStart:'', dayDate:(function(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')})(), aiMode:'nlp', chartColors:{work:'#4F8BFF',study:'#7C5CFF',life:'#00D2FF'}, scene:''}),
   pomo: load(STORAGE.POMO, {records:[], todayMins:0, count:0, dateStamp:''}),
   focus: {running:false, taskId:'', total:25*60, remain:25*60, timer:null},
   ai: {pending:false, abort:null, lastPlan:null},
@@ -1514,9 +1558,9 @@ function persistAll(){save(STORAGE.TASKS,state.tasks);save(STORAGE.API,state.api
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const uid = () => 't'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-const fmtDate = d => d.toISOString().slice(0,10);
-const todayStr = () => fmtDate(new Date());
 const pad = n => String(n).padStart(2,'0');
+const fmtDate = d => { if(!d||isNaN(new Date(d).getTime())) return ''; const x=new Date(d); return x.getFullYear()+'-'+pad(x.getMonth()+1)+'-'+pad(x.getDate()); };
+const todayStr = () => fmtDate(new Date());
 function parseDateTime(date,time){if(!date)return null;return new Date(date+'T'+(time||'23:59'))}
 function isOverdue(t){if(t.status==='done'||!t.date)return false;return parseDateTime(t.date,t.time)<new Date()}
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -1621,6 +1665,31 @@ document.addEventListener('keydown', e=>{
   if(map[e.key]){App.switchTab(map[e.key])}
 });
 
+/* ---------- Modal focus trap (键盘可访问性) ---------- */
+document.addEventListener('keydown', e=>{
+  if(e.key!=='Tab')return;
+  const open = $$('.modal-mask.show').pop();
+  if(!open)return;
+  const focusable = Array.from(open.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+    .filter(el=>!el.disabled && el.offsetParent!==null);
+  if(!focusable.length)return;
+  const first=focusable[0], last=focusable[focusable.length-1];
+  if(e.shiftKey){
+    if(document.activeElement===first || !open.contains(document.activeElement)){e.preventDefault();last.focus();}
+  }else{
+    if(document.activeElement===last){e.preventDefault();first.focus();}
+  }
+});
+
+/* ---------- 任务卡片键盘打开详情 ---------- */
+document.addEventListener('keydown', e=>{
+  if(e.key!=='Enter')return;
+  const b = e.target;
+  if(b && b.classList && b.classList.contains('t-body')){
+    const card = b.closest('.task'); if(card&&card.dataset.id)App.viewTask(card.dataset.id);
+  }
+});
+
 /* ---------- Drawer (mobile) ---------- */
 App.openDrawer = function(which){const a=$('#app');a.classList.remove('show-sidebar','show-ai');a.classList.add(which==='ai'?'show-ai':'show-sidebar')};
 App.closeDrawer = function(){$('#app').classList.remove('show-sidebar','show-ai')};
@@ -1657,7 +1726,7 @@ function taskRowHtml(t,opts={}){
   const noteHtml = t.note?'<div class="md-note" style="margin-top:6px;font-size:12px;color:var(--text-3)">'+markdownLite(t.note).slice(0,300)+'</div>':'';
   return '<div class="task '+(t.status==='done'?'done ':'')+priCls+'" data-id="'+t.id+'" draggable="'+(opts.kanban?'true':'false')+'">'
     +'<button class="check" onclick="App.toggleDone(\''+t.id+'\',event)" aria-label="完成"><svg width="12" height="12"><use href="#i-check"/></svg></button>'
-    +'<div class="t-body" onclick="App.viewTask(\''+t.id+'\')">'
+    +'<div class="t-body" tabindex="0" role="button" aria-label="查看任务详情" onclick="App.viewTask(\''+t.id+'\')">'
       +'<div class="t-title">'+highlight(t.title||'(无标题)',q)+'</div>'
       +'<div class="t-meta">'
         +(due?'<span class="due '+(over?'overdue':'')+'">📅 '+escapeHtml(due)+'</span>':'')
@@ -1686,14 +1755,13 @@ function repeatLabel(t){
 /* ---------- Render: Tasks ---------- */
 App.filterByScene = function(scene){
   state.ui.filter.stat='';state.ui.filter.pri='';state.ui.filter.cat='';
-  // Set search to scene keyword
-  state.ui.search = scene;
-  $('#searchInput').value = scene;
+  state.ui.filter.scene = (state.ui.filter.scene===scene)?'':scene;
+  state.ui.search='';$('#searchInput').value='';
   save(STORAGE.UI,state.ui);
   App.switchTab('todo');
   renderTasks();
   const sp = SCENE_PROFILES.find(s=>s.key===scene);
-  toast('已筛选：'+(sp?sp.name:scene),'info');
+  toast(state.ui.filter.scene?('已筛选身份：'+(sp?sp.name:scene)):'已清除身份筛选','info');
 };
 function applyFilter(list){
   const f = state.ui.filter, q = state.ui.search.trim().toLowerCase();
@@ -1702,6 +1770,7 @@ function applyFilter(list){
   else if(f.stat) r = r.filter(t=>t.status===f.stat);
   if(f.pri) r = r.filter(t=>t.priority===f.pri);
   if(f.cat) r = r.filter(t=>t.category===f.cat);
+  if(f.scene) r = r.filter(t=>t.scene===f.scene);
   if(q) r = r.filter(t=>(t.title+' '+(t.note||'')+' '+(t.tags||[]).join(' ')).toLowerCase().includes(q));
   const sort = state.ui.sort;
   r.sort((a,b)=>{
@@ -1780,7 +1849,7 @@ function bindKanbanDnD(){
 
 /* ---------- Render: Week / Day timeline ---------- */
 function weekDays(){
-  const base = state.ui.weekStart?new Date(state.ui.weekStart):startOfWeek(new Date());
+  const base = state.ui.weekStart?new Date(state.ui.weekStart+'T00:00:00'):startOfWeek(new Date());
   return Array.from({length:7},(_,i)=>addDays(base,i));
 }
 function timelineBlock(t,dayStr,compact=false,lane=0,totalLanes=1){
@@ -1820,7 +1889,7 @@ function renderTimelineSummary(tasks, wrap){
 function renderWeek(){
   if(!state.ui.weekStart) state.ui.weekStart = fmtDate(startOfWeek(new Date()));
   const days = weekDays();
-  $('#weekTitle').textContent = days[0].toISOString().slice(5,10)+' – '+days[6].toISOString().slice(5,10);
+  $('#weekTitle').textContent = fmtDate(days[0]).slice(5)+' – '+fmtDate(days[6]).slice(5);
   const dayStrs = days.map(fmtDate);
   const weekTasks = state.tasks.filter(t=>dayStrs.includes(t.date));
   renderTimelineSummary(weekTasks,$('#weekSummary'));
@@ -2283,16 +2352,14 @@ function reminderTick(){
   const now = Date.now();
   state.tasks.forEach(t=>{
     if(t.status==='done'||!t.date)return;
+    const mins = parseInt(t.reminder);
+    if(!mins||mins<=0)return; // 用户明确选择“不提醒”
     const due = parseDateTime(t.date,t.time||'09:00').getTime();
     const diff = due - now;
-    const rules = t.reminder?[t.reminder]:[5,15,30,60];
-    rules.forEach(m=>{
-      if(!m)return;
-      const win = m*60*1000;
-      if(diff>0 && diff<=win && diff>win-60*1000){
-        const k='r_'+t.id+'_'+m;if(!sessionStorage.getItem(k)){sessionStorage.setItem(k,'1');notify('⏰ '+t.title,'还有约 '+m+' 分钟到期')}
-      }
-    });
+    const win = mins*60*1000;
+    if(diff>0 && diff<=win && diff>win-60*1000){
+      const k='r_'+t.id+'_'+mins;if(!sessionStorage.getItem(k)){sessionStorage.setItem(k,'1');notify('⏰ '+t.title,'还有约 '+mins+' 分钟到期')}
+    }
   });
 }
 
@@ -2304,8 +2371,8 @@ function localNlpParse(text){
     let title = seg;let date='', time='', priority='med', category='工作';
     const today = new Date();
     function setDate(d){date = fmtDate(d)}
-    if(/今天|今日/.test(seg)){setDate(today)}
-    if(/明天|明日/.test(seg)){const d=new Date(today);d.setDate(d.getDate()+1);setDate(d)}
+    if(/今天|今日|今早|今晨/.test(seg)){setDate(today)}
+    if(/明天|明日|明早|明晚/.test(seg)){const d=new Date(today);d.setDate(d.getDate()+1);setDate(d)}
     if(/大后天/.test(seg)){const d=new Date(today);d.setDate(d.getDate()+3);setDate(d)}
     if(/后天/.test(seg)){const d=new Date(today);d.setDate(d.getDate()+2);setDate(d)}
     if(/月底|月末/.test(seg)){const d=new Date(today.getFullYear(),today.getMonth()+1,0);setDate(d)}
@@ -2323,10 +2390,10 @@ function localNlpParse(text){
       if(/凌晨/.test(w)&&h===12)h=0;
       if(/中午/.test(w)&&h<12)h+=12;
       time = pad(h)+':'+pad(mm);
-    } else if(/早上|早晨/.test(seg)) time='09:00';
+    } else if(/早上|早晨|明早|今早|今晨/.test(seg)) time='09:00';
     else if(/中午/.test(seg)) time='12:00';
     else if(/下午/.test(seg)) time='15:00';
-    else if(/晚上|傍晚/.test(seg)) time='20:00';
+    else if(/晚上|傍晚|明晚/.test(seg)) time='20:00';
     if(/紧急|加急|重要|马上|尽快|deadline|截止|交付/i.test(seg)) priority='high';
     else if(/有空|随便|方便时|顺便/.test(seg)) priority='low';
     if(/学习|学|读|看书|背|复习|预习|课/.test(seg)) category='学习';
@@ -2350,7 +2417,7 @@ function localNlpParse(text){
       {keys:/创业|融资|bp|路演|投资人|合伙人|团队| ceo|商业计划/,scene:'startup'}
     ];
     for(const sm of sceneMap){if(sm.keys.test(seg)){scene=sm.scene;break}}
-    title = seg.replace(/(今天|今日|明天|明日|大后天|后天|月底|月末|早上|早晨|中午|下午|晚上|傍晚|凌晨|紧急|加急|马上|尽快)/g,'')
+    title = seg.replace(/(今天|今日|明天|明日|明早|明晚|今早|今晨|大后天|后天|月底|月末|早上|早晨|中午|下午|晚上|傍晚|凌晨|紧急|加急|马上|尽快)/g,'')
                .replace(/(下)?(?:周|星期)[一二三四五六日天]/g,'')
                .replace(/\d{1,2}月\d{1,2}[日号]/g,'')
                .replace(/\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/g,'')
@@ -2662,8 +2729,9 @@ App.exportICS = function(){
   const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Zhixu//AI Schedule//ZH','CALSCALE:GREGORIAN'];
   state.tasks.forEach(t=>{
     if(!t.date)return;
-    const dt = (t.date+'T'+(t.time||'09:00')).replace(/[-:]/g,'')+'00';
-    const dtEnd = new Date(parseDateTime(t.date,t.time||'09:00').getTime()+30*60000);
+    const startMs = parseDateTime(t.date,t.time||'09:00').getTime();
+    const dt = new Date(startMs).toISOString().replace(/[-:]/g,'').slice(0,15)+'00Z';
+    const dtEnd = new Date(startMs+30*60000);
     const dtE = dtEnd.toISOString().replace(/[-:]/g,'').slice(0,15)+'00Z';
     lines.push('BEGIN:VEVENT','UID:'+t.id+'@zhixu','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').slice(0,15)+'00Z','DTSTART:'+dt,'DTEND:'+dtE,'SUMMARY:'+(t.title||'').replace(/[\n,;]/g,' '),'DESCRIPTION:优先级 '+PRI_LABEL[t.priority]+(t.note?(' | '+t.note.replace(/[\n,;]/g,' ')):''),'CATEGORIES:'+t.category,'END:VEVENT');
   });
@@ -2686,27 +2754,91 @@ function download(name, content, type){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast('已导出 '+name,'ok');
 }
+function parseCSV(text){
+  text = String(text).replace(/^\ufeff/,'');
+  const rows=[];let row=[],cur='',inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else inQ=false; }
+      else cur+=c;
+    }else{
+      if(c==='"')inQ=true;
+      else if(c===','){row.push(cur);cur='';}
+      else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n')i++; row.push(cur);cur=''; if(row.some(x=>String(x).trim()!==''))rows.push(row); row=[]; }
+      else cur+=c;
+    }
+  }
+  if(cur!==''||row.length){row.push(cur);if(row.some(x=>String(x).trim()!==''))rows.push(row);}
+  return rows;
+}
+function csvToTasks(text){
+  const rows = parseCSV(text);
+  if(rows.length<2) return [];
+  const head = rows[0].map(h=>String(h).trim());
+  const idx = n => head.indexOf(n);
+  const iTitle=idx('标题'),iDate=idx('日期'),iTime=idx('时间'),iStatus=idx('状态'),iPri=idx('优先级'),iCat=idx('分类'),iScene=idx('身份场景'),iDur=idx('预计时长'),iTags=idx('标签'),iNote=idx('备注');
+  if(iTitle<0) return [];
+  const statusMap={'未完成':'todo','进行中':'doing','已完成':'done'};
+  const priMap={'高':'high','中':'med','低':'low'};
+  const sceneNameToKey={};SCENE_PROFILES.forEach(p=>sceneNameToKey[p.name]=p.key);
+  const out=[];
+  for(let r=1;r<rows.length;r++){
+    const cells=rows[r];
+    const title=(iTitle>=0?(cells[iTitle]||''):'').trim();
+    if(!title)continue;
+    out.push({
+      title,
+      date:(iDate>=0?(cells[iDate]||''):'').trim(),
+      time:(iTime>=0?(cells[iTime]||''):'').trim(),
+      status:statusMap[(iStatus>=0?(cells[iStatus]||'').trim():'')]||'todo',
+      priority:priMap[(iPri>=0?(cells[iPri]||'').trim():'')]||'med',
+      category:(iCat>=0?(cells[iCat]||'').trim():'工作'),
+      scene:sceneNameToKey[(iScene>=0?(cells[iScene]||'').trim():'')]||'',
+      duration:iDur>=0?(parseInt(cells[iDur])||45):45,
+      tags:iTags>=0?(cells[iTags]||'').split('|').map(s=>s.trim()).filter(Boolean):[],
+      note:iNote>=0?(cells[iNote]||''):''
+    });
+  }
+  return out;
+}
 $('#importFile').addEventListener('change', async e=>{
   const f = e.target.files[0];if(!f)return;
   try{
-    const text = await f.text();const data = JSON.parse(text);
-    if(!data.tasks)throw new Error('无效格式');
-    confirmDlg('导入 '+data.tasks.length+' 条任务，将合并到当前数据。继续？',()=>{
-      const ids = new Set(state.tasks.map(t=>t.id));
-      data.tasks.forEach(t=>{if(!ids.has(t.id))state.tasks.push(t)});
-      if(data.pomo)state.pomo=Object.assign(state.pomo,data.pomo);
-      save(STORAGE.TASKS,state.tasks);save(STORAGE.POMO,state.pomo);renderAll();toast('已导入','ok');
-    },'导入数据');
-  }catch(err){toast('导入失败：'+err.message,'err')}
+    const text = await f.text();
+    const isCSV = /\.csv$/i.test(f.name);
+    let tasks=[], pomo=null;
+    if(isCSV){
+      tasks = csvToTasks(text);
+      if(!tasks.length) throw new Error('CSV 未解析到有效任务（需首行为表头，且包含“标题”列）');
+    } else {
+      let data;
+      try{data=JSON.parse(String(text).replace(/^\ufeff/,''));}catch(_){throw new Error('不是有效的 JSON 文件');}
+      if(!data||!Array.isArray(data.tasks)) throw new Error('JSON 缺少 tasks 数组，无法识别为智序备份');
+      tasks = data.tasks; pomo = data.pomo||null;
+    }
+    const clean = sanitizeTasks(tasks);
+    if(!clean.length) throw new Error('未解析到有效任务');
+    const before = state.tasks.length;
+    confirmDlg('即将导入 '+clean.length+' 条任务，按 ID 去重后合并到当前 '+before+' 条（不会清空现有数据）。继续？',()=>{
+      const ids=new Set(state.tasks.map(t=>t.id));
+      let added=0;
+      clean.forEach(t=>{ if(!ids.has(t.id)){state.tasks.push(t);ids.add(t.id);added++;} });
+      if(pomo&&Array.isArray(pomo.records)){ state.pomo.records=(state.pomo.records||[]).concat(pomo.records); }
+      save(STORAGE.TASKS,state.tasks);save(STORAGE.POMO,state.pomo);renderAll();
+      toast('导入完成：新增 '+added+' 条（跳过重复 '+(clean.length-added)+' 条）','ok');
+    },'导入数据','primary');
+  }catch(err){toast('导入失败：'+err.message,'err',5000)}
   e.target.value='';
 });
 
 /* ---------- Search & filters ---------- */
-$('#searchInput').addEventListener('input', e=>{state.ui.search=e.target.value;save(STORAGE.UI,state.ui);renderTasks();renderToday()});
+$('#searchInput').addEventListener('input', e=>{state.ui.search=e.target.value;state.ui.filter.scene='';save(STORAGE.UI,state.ui);renderTasks();renderToday()});
 ['segStatus','segPri','segCat'].forEach(id=>{
   $('#'+id).addEventListener('click', e=>{
     const b = e.target.closest('button');if(!b)return;
     $('#'+id).querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    state.ui.filter.scene='';
     if(id==='segStatus')state.ui.filter.stat=b.dataset.stat;
     if(id==='segPri')state.ui.filter.pri=b.dataset.pri;
     if(id==='segCat')state.ui.filter.cat=b.dataset.cat;
