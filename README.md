@@ -1,71 +1,50 @@
-# zhixu ·「智序」AI 增强型日程与智能待办助手（v2.0）
+<div align="right">
 
-> 一句话简介：离线优先 AI 日程助手：多视图、周期任务、自然语言与智能编排
+**[English](README.md)** · [简体中文](README.zh-CN.md)
 
-## 一、项目概述与定位
+</div>
 
-**智序（v2.0）** 是 TRAE AI 创造力大赛"学习工作赛道"的参赛作品，一个**纯前端单 HTML 文件**的 AI 增强型日程与智能待办助手：无需安装、注册、后端，双击即用。
+# zhixu
 
-它要解决的痛点是：普通待办 App 只能"记下来"，却不知道"今天先做哪个""这句话什么意思"。作者本人就是目标用户（课程社团排满、任务越堆越多的学生），定位是做一个"不只是记，还能帮我想"的时间管理工具。v1.0 完成基础待办+AI 解析，根据初赛反馈迭代到 v2.0 的**多视图时间管理 + 周期任务 + 子任务 + 场景模板 + 统计可视化**。
+An offline-first schedule assistant — multiple views, recurring tasks, natural-language entry.
 
-合规声明（作者自述）：纯前端单 HTML、零后端、不引用第三方 CDN/字体/图片、源码不含任何真实 API 密钥；API Key 由用户自行填写，仅存浏览器 localStorage。
+<sub>Single HTML file · no backend · data stays local</sub>
 
-## 二、核心功能（v2.0 共 14 项升级）
+---
 
-**视图层**
-- 周视图：7 列时间轴网格，HTML5 Drag & Drop 拖拽调整任务到不同日期/时段，上/下周切换；
-- 日视图：单日精细时间线，日期选择器跳转，"添加到当天"；
-- 月视图增强：日历格 hover 任务详情浮窗，双击快速建任务；
-- 另有看板拖拽、今日聚焦、数据统计视图。
+## What it does
 
-**任务核心**
-- 周期任务：每天/每周/每月/每年/自定义星期重复，完成自动生成下一次；
-- 子任务：多子任务 + 进度条可视化；
-- 每任务自定义提醒（5/15/30/60 分钟桌面通知）；
-- Markdown 备注（链接、列表）。
+Daily scheduling in one page:
 
-**AI 深化**
-- AI 智能编排：结合预计时长+优先级+截止时间生成时间块；无 Key 时按优先级贪心分配（离线可用）；
-- 自然语言编辑：输入"把开会改到明天下午3点"直接改任务；
-- 离线 NLP：识别"大后天/月底/下周一/周X"等中文时间表达。
+- **Multiple views** — day, week, month
+- **Recurring tasks** — daily, weekly, by weekday, month-end
+- **Natural-language entry** — type "明天下午三点开会" and it becomes an event
+- **Offline** — all data in `localStorage`; the page works with no network at all
 
-**数据与导出**
-- CSV 导出、Markdown 清单导出、JSON 备份/恢复、ICS 日历订阅。
+## Why single-file, no backend
 
-**场景模板**
-- 5 类职业模板：学生/职场/自由职业/家庭管理/创业者，一键载入预设任务。
+An assistant you check every morning should load instantly and never fail because a server is down. A single HTML file opens from disk in one click.
 
-**交互**
-- 统计折线图 tooltip（hover 日期完成数、点击看当日明细）、热力图、分类分布；
-- 快捷键：`N` 新建、`Ctrl+K` 命令面板、`1-8` 切视图、`Esc` 关闭弹窗。
+The trade-off is real: no cross-device sync, and clearing browser data loses the schedule. Export to JSON exists for that reason.
 
-## 三、技术栈与设计
+## Design decisions worth noting
 
-- **技术**：原生 HTML + CSS + JavaScript，单文件（约 245KB）内联全部结构/样式/逻辑。
-- **视觉**："极光玻璃拟态"系统——CSS 变量 + `backdrop-filter` 玻璃面板 + 渐变主题色，纯 CSS 实现，不引第三方库。
-- **AI 接入**：兼容 OpenAI Chat Completions 协议，支持 SSE 流式输出、JSON 模式、本地额度管控；8 种供应商预设（豆包/DeepSeek/OpenAI/智谱/Moonshot/通义千问/Ollama 本地等）。
-- **关键算法**：周视图拖拽重排的坐标计算与时间块定位、无 Key 时的优先级贪心时间编排、离线中文时间表达 NLP。
-- **响应式**：移动端横向滚动适配。
+**Recurrence is computed, not stored.** A repeating task keeps one rule, not many instances. The month view generates occurrences on demand, so a daily task does not create 365 rows.
 
-## 四、目录结构
+**Natural language is parsed locally.** No model call — a small rule set handles the common shapes (relative dates, weekday names, time expressions). It fails on complicated input, and says so rather than guessing.
+
+**Month-end recurrence is handled explicitly.** "The 31st" in February is the last day, not skipped. This is the case most recurring-task code gets wrong.
+
+## Layout
 
 ```
-zhixu/
-├── README.md                                    # 报名帖全文（11.5KB）
-└── 智序-AI增强型日程与智能待办助手.html          # 完整应用（约 245KB，单文件）
+index.html      the whole application
 ```
 
-## 五、运行与使用
+## Running
 
-直接浏览器打开 HTML 即可。首次进入可选"载入演示数据"或学生/职场等场景模板快速体验；如需在线 AI，在"API 管理"自填 Key；不配 Key 时基础任务管理、离线 NLP、全部视图与导出仍可用。
+Open `index.html` in a browser. Nothing to install.
 
-## 六、数据/资源构成
+## License
 
-仅 2 个文本文件（Markdown + HTML），**无图片、音视频、字体等二进制文件**（截图在报名帖中为外链占位，未入库）。所有数据存浏览器 localStorage，导出为 CSV/Markdown/JSON/ICS。
-
-## 七、项目特点
-
-1. **离线优先**：核心价值不依赖网络 API，无 Key 也能用，降低 AI 工具的接入门槛。
-2. **单文件工程**：在 245KB 内集成多视图日历、拖拽、NLP、AI 编排、统计图表、多格式导出，是典型的"单 HTML 复杂应用"样本。
-3. **场景化而非大而全**：面对学生/程序员/自由职业者/宝妈/创业者的差异需求，不做多个产品，而是同一数据模型 + 场景模板适配不同角色。
-4. **AI 协作开发样本**：完整记录了与 AI 编程助手从 1.0 到 2.0 的协作迭代过程（玻璃拟态 CSS 变量体系、周视图拖拽算法等）。
+MIT
